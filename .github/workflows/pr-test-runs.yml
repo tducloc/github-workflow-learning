@@ -1,0 +1,162 @@
+name: PR Playwright Tests
+
+on:
+  pull_request:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-playwright-${{ github.event.pull_request.number || github.event.issue.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  playwright:
+    name: Run Playwright tests
+    # Only run if it's a PR open/reopen, or a PR comment with exactly "Run test"
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.body == 'Run test')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine PR context and ref
+        id: ctx
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let prNumber;
+            if (context.eventName === 'pull_request') {
+              prNumber = context.payload.pull_request.number;
+            } else if (context.eventName === 'issue_comment' && context.payload.issue && context.payload.issue.pull_request) {
+              prNumber = context.payload.issue.number;
+            } else {
+              core.setFailed('Not a pull_request or PR comment context');
+              return;
+            }
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            core.setOutput('prNumber', String(prNumber));
+            core.setOutput('prNodeId', pr.node_id);
+            core.setOutput('wasDraft', pr.draft ? 'true' : 'false');
+            core.setOutput('headSha', pr.head.sha);
+            core.setOutput('checkoutRef', `refs/pull/${prNumber}/head`);
+            core.setOutput('prBody', pr.body || '');
+
+      - name: Temporarily convert PR to draft (disable merging)
+        if: steps.ctx.outputs.wasDraft == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNodeId = core.getInput('prNodeId');
+            const mutation = `
+              mutation($prId: ID!) {
+                convertPullRequestToDraft(input: { pullRequestId: $prId }) { clientMutationId }
+              }
+            `;
+            await github.graphql(mutation, { prId: prNodeId });
+          result-encoding: string
+          prNodeId: ${{ steps.ctx.outputs.prNodeId }}
+
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ctx.outputs.checkoutRef }}
+          fetch-depth: 0
+
+      - name: Parse PR Tests block
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = core.getInput('prBody');
+
+            // Find code block after "### PR Tests"
+            const sectionRegex = /###\s*PR Tests[\s\S]*?```([\s\S]*?)```/i;
+            const match = sectionRegex.exec(body);
+            let patterns = [];
+            if (match && match[1]) {
+              const code = match[1];
+              const lines = code.split(/\r?\n/);
+              let inPlaywright = false;
+              for (const rawLine of lines) {
+                const line = rawLine.trim();
+                if (!line) continue;
+                if (/^playwright\s*:\s*$/i.test(line)) {
+                  inPlaywright = true;
+                  continue;
+                }
+                if (inPlaywright) {
+                  // Expect format: - path/pattern
+                  const m = /^-\s+(.+)$/.exec(line);
+                  if (m) {
+                    const p = m[1].trim();
+                    if (p) patterns.push(p);
+                    continue;
+                  }
+                  // Stop when hitting a new top-level key
+                  if (/^[a-zA-Z]/.test(line)) {
+                    inPlaywright = false;
+                  }
+                }
+              }
+            }
+
+            core.setOutput('patterns', JSON.stringify(patterns));
+          prBody: ${{ steps.ctx.outputs.prBody }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            corepack enable
+            corepack prepare pnpm@9.7.1 --activate
+            pnpm install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            yarn install --frozen-lockfile
+          else
+            npm ci
+          fi
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright tests (filtered if provided)
+        env:
+          PATTERNS_JSON: ${{ steps.parse.outputs.patterns }}
+        run: |
+          echo "Patterns: $PATTERNS_JSON"
+          node -e "const arr=JSON.parse(process.env.PATTERNS_JSON||'[]'); if(arr.length){console.log('Running filtered tests:', arr); process.exit(0);} else { console.log('No patterns provided; running full suite'); process.exit(1);}"
+          if [ $? -eq 0 ]; then \
+            npx playwright test $(node -e "const a=JSON.parse(process.env.PATTERNS_JSON||'[]'); process.stdout.write(a.join(' '))"); \
+          else \
+            npx playwright test; \
+          fi
+
+      - name: Restore PR ready-for-review state
+        if: always() && steps.ctx.outputs.wasDraft == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNodeId = core.getInput('prNodeId');
+            const mutation = `
+              mutation($prId: ID!) {
+                markPullRequestReadyForReview(input: { pullRequestId: $prId }) { clientMutationId }
+              }
+            `;
+            await github.graphql(mutation, { prId: prNodeId });
+          result-encoding: string
+          prNodeId: ${{ steps.ctx.outputs.prNodeId }}
