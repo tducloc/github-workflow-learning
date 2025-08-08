@@ -1,0 +1,78 @@
+name: PR Test
+
+on:
+  pull_request:
+    types: [opened, reopened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  test:
+    if: |
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, 'Run test'))
+
+    runs-on: ubuntu-latest
+
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: true
+
+    container:
+      image: mcr.microsoft.com/playwright:v1.43.1-jammy
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Disable merge button
+        if: success()
+        run: |
+          gh pr merge --disable-auto ${{ github.event.pull_request.number || github.event.issue.number }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get test files from PR description
+        id: get_test_files
+        run: |
+          # The PR description is in the body of the pull request event
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            pr_body="${{ github.event.pull_request.body }}"
+          elif [ "${{ github.event_name }}" == "issue_comment" ]; then
+            pr_body=$(gh pr view ${{ github.event.issue.number }} --json body -q .body)
+          fi
+
+          # Extract the playwright test files
+          test_files=$(echo "$pr_body" | awk '/playwright:/, /```/{if (!/playwright:/ && !/```/) print}' | sed 's/  - //')
+
+          # If no files are found, exit
+          if [ -z "$test_files" ]; then
+            echo "No test files specified in the PR description."
+            echo "::set-output name=files::"
+          else
+            echo "::set-output name=files::$test_files"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install pnpm
+        run: npm install -g pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Run Playwright tests
+        if: steps.get_test_files.outputs.files != ''
+        run: pnpm exec playwright test ${{ steps.get_test_files.outputs.files }}
+
+      - name: Re-enable merge button
+        if: always()
+        run: |
+          gh pr merge --enable-auto ${{ github.event.pull_request.number || github.event.issue.number }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
