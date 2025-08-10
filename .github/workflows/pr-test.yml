@@ -36,6 +36,8 @@ jobs:
     needs: pre-run
     if: needs.pre-run.outputs.pr-tests != ''
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.54.2-jammy
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -58,9 +60,6 @@ jobs:
           key: pnpm-${{ hashFiles('pnpm-lock.yaml') }}
 
       - run: pnpm install --store-dir=node_modules/.pnpm-store
-
-      - name: Install Playwright Chromium only
-        run: pnpm exec playwright install --with-deps chromium
 
       - name: Run tests from PR description
         run: node ./scripts/ci/test-pr.js
