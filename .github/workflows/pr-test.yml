@@ -29,7 +29,10 @@ jobs:
       - name: Pass PR Tests to run job
         id: out-step
         run: |
+          echo "Debug: group1='${{ steps.regex-match-pr-tests.outputs.group1 }}'"
+          echo "Debug: match='${{ steps.regex-match-pr-tests.outputs.match }}'"
           CONTENT="${{ steps.regex-match-pr-tests.outputs.group1 }}"
+          echo "Debug: CONTENT='$CONTENT'"
           if [ -n "$CONTENT" ]; then
             {
               echo 'pr-tests<<__PR_TESTS__'
@@ -37,6 +40,8 @@ jobs:
               echo
               echo '__PR_TESTS__'
             } >> "$GITHUB_OUTPUT"
+          else
+            echo "CONTENT is empty, no output set"
           fi
 
   run-tests:
