@@ -22,27 +22,15 @@ jobs:
         uses: actions-ecosystem/action-regex-match@v2
         id: regex-match-pr-tests
         with:
-          text: ${{ github.event.pull_request.body }}
-          regex: '### PR Tests[\\s\\S]*?```([\\s\\S]*?)```'
+          text: ${{ (github.event.pull_request.body) }}
+          regex: '^###\\s*PR Tests[\\s\\S]*?```([\\s\\S]*?)```'
           flags: m
 
       - name: Pass PR Tests to run job
         id: out-step
         run: |
-          echo "Debug: group1='${{ steps.regex-match-pr-tests.outputs.group1 }}'"
-          echo "Debug: match='${{ steps.regex-match-pr-tests.outputs.match }}'"
-          CONTENT="${{ steps.regex-match-pr-tests.outputs.group1 }}"
-          echo "Debug: CONTENT='$CONTENT'"
-          if [ -n "$CONTENT" ]; then
-            {
-              echo 'pr-tests<<__PR_TESTS__'
-              printf '%s' "$CONTENT"
-              echo
-              echo '__PR_TESTS__'
-            } >> "$GITHUB_OUTPUT"
-          else
-            echo "CONTENT is empty, no output set"
-          fi
+          echo "${{ steps.regex-match-pr-tests.outputs.group1 }}"
+          echo "pr-tests=${{ steps.regex-match-pr-tests.outputs.group1 }}" >> $GITHUB_OUTPUT
 
   run-tests:
     needs: pre-run
@@ -70,7 +58,6 @@ jobs:
           path: |
             node_modules
           key: pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-
       - run: pnpm install --store-dir=node_modules/.pnpm-store
 
       - name: Run tests from PR description
