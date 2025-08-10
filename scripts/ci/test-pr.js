@@ -3,13 +3,10 @@ import getExec from "../common/exec.js";
 
 const { exec, checkExit } = getExec();
 
-function extractPrTestsYaml(prBody) {
-  if (!prBody) return "";
-  try {
-    return prBody.split("### PR Tests")[1].trim().split("```")[1].trim();
-  } catch (_e) {
-    return "";
-  }
+function getPreExtractedYaml() {
+  // Get the pre-extracted YAML from the environment variable
+  const yamlContent = process.env.PR_TESTS_YAML || "";
+  return yamlContent.trim();
 }
 
 function checkShouldRunAllTests(value) {
@@ -48,13 +45,15 @@ function runRequested(sectionName, value) {
 }
 
 const main = () => {
-  const prBody = process.env.PULL_REQUEST_BODY || "";
-  const testConfigs = extractPrTestsYaml(prBody);
+  const testConfigs = getPreExtractedYaml();
 
   if (!testConfigs) {
-    console.log("There's no PR Tests configs in the PR Description, skipped.");
+    console.log("There's no PR Tests configs found, skipped.");
     process.exit(0);
   }
+
+  console.log("Received pre-extracted YAML:");
+  console.log(testConfigs);
 
   try {
     const test = yaml.load(testConfigs);
