@@ -31,6 +31,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set check status to running (for workflow_dispatch)
+        if: ${{ inputs.pr_number }}
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const prNumber = Number(process.env.PR_NUMBER);
+            const headSha = process.env.HEAD_SHA;
+
+            if (prNumber && headSha) {
+              await github.rest.repos.createCommitStatus({
+                owner, repo,
+                sha: headSha,
+                state: 'pending',
+                target_url: `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`,
+                description: 'Playwright tests are running...',
+                context: 'PR Playwright Checks / Playwright'
+              });
+            }
+
       - name: Resolve PR number
         id: prnum
         uses: actions/github-script@v7
@@ -103,3 +126,28 @@ jobs:
       - name: Run Playwright tests
         if: ${{ steps.testspec.outputs.cliArgs != '' }}
         run: pnpm exec playwright test ${{ steps.testspec.outputs.cliArgs }}
+
+      - name: Update check status (for workflow_dispatch)
+        if: ${{ always() && inputs.pr_number }}
+        uses: actions/github-script@v7
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+          HEAD_SHA: ${{ inputs.head_sha }}
+          JOB_STATUS: ${{ job.status }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const prNumber = Number(process.env.PR_NUMBER);
+            const headSha = process.env.HEAD_SHA;
+            const status = process.env.JOB_STATUS === 'success' ? 'success' : 'failure';
+
+            if (prNumber && headSha) {
+              await github.rest.repos.createCommitStatus({
+                owner, repo,
+                sha: headSha,
+                state: status,
+                target_url: `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`,
+                description: status === 'success' ? 'Playwright tests passed' : 'Playwright tests failed',
+                context: 'PR Playwright Checks / Playwright'
+              });
+            }
