@@ -22,7 +22,7 @@ jobs:
         uses: actions-ecosystem/action-regex-match@v2
         id: regex-match-pr-tests
         with:
-          text: ${{ toJSON(github.event.pull_request.body) }}
+          text: ${{ github.event.pull_request.body }}
           regex: '### PR Tests[\\s\\S]*?```([\\s\\S]*?)```'
           flags: m
 
