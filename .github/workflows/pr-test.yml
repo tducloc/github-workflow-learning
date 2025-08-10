@@ -23,14 +23,14 @@ jobs:
         id: regex-match-pr-tests
         with:
           text: ${{ toJSON(github.event.pull_request.body) }}
-          regex: '(### PR Tests\r\n```)([^`]+?)(```)'
+          regex: '### PR Tests[\\s\\S]*?```([\\s\\S]*?)```'
           flags: gm
 
       - name: Pass PR Tests to run job
         id: out-step
         run: |
-          echo "${{ steps.regex-match-pr-tests.outputs.group2 }}"
-          echo "pr-tests=${{ steps.regex-match-pr-tests.outputs.group2 }}" >> $GITHUB_OUTPUT
+          echo "${{ steps.regex-match-pr-tests.outputs.group1 }}"
+          echo "pr-tests=${{ steps.regex-match-pr-tests.outputs.group1 }}" >> $GITHUB_OUTPUT
 
   run-tests:
     needs: pre-run

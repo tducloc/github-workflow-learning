@@ -3,57 +3,76 @@ import getExec from "../common/exec.js";
 
 const { exec, checkExit } = getExec();
 
-let testConfigs;
-try {
-  testConfigs = process.env.PULL_REQUEST_BODY.split("### PR Tests")[1]
-    .trim()
-    .split("```")[1];
-} catch (error) {
-  console.error("Failed to parse PR Tests section from PR Description.", error);
+function extractPrTestsYaml(prBody) {
+  if (!prBody) return "";
+  try {
+    return prBody.split("### PR Tests")[1].trim().split("```")[1];
+  } catch (_e) {
+    return "";
+  }
 }
 
-let test;
-if (!testConfigs) {
-  console.log("There's no PR Tests configs in the PR Description, skipped.");
-  process.exit(0);
-} else {
+function checkShouldRunAllTests(value) {
+  if (!value) return false;
+  if (value === "all") return true;
+  return Array.isArray(value) && value.includes("all");
+}
+
+function normalizeSpecs(value) {
+  if (!value) return "";
+  if (Array.isArray(value)) return value.join(" ");
+  return String(value);
+}
+
+function runRequested(sectionName, value) {
+  const runners = {
+    playwright: {
+      base: "pnpm exec playwright test --project=chromium",
+      onAllArgs: [],
+    },
+    vitest: {
+      base: "pnpm exec vitest run",
+      onAllArgs: ["--coverage"],
+    },
+  };
+
+  const runner = runners[sectionName];
+  if (!runner || value == null) return;
+
+  const runAll = checkShouldRunAllTests(value);
+  const args = runAll
+    ? runner.onAllArgs
+    : [normalizeSpecs(value)].filter(Boolean);
+  const command = [runner.base, ...args].join(" ").trim();
+  exec(command);
+}
+
+const main = () => {
+  const prBody = process.env.PULL_REQUEST_BODY || "";
+  const testConfigs = extractPrTestsYaml(prBody);
+
+  if (!testConfigs) {
+    console.log("There's no PR Tests configs in the PR Description, skipped.");
+    process.exit(0);
+  }
+
   try {
-    test = yaml.load(testConfigs);
+    const test = yaml.load(testConfigs);
+    console.log("Tests:", test);
+
+    console.log("Use testScripts: ", {
+      PLAYWRIGHT: "pnpm exec playwright test --project=chromium",
+      VITEST: "pnpm exec vitest run",
+    });
+
+    runRequested("playwright", test?.playwright);
+    runRequested("vitest", test?.vitest);
   } catch (error) {
     console.error("Failed to parse PR Tests as YAML format.", error);
     process.exit(1);
+  } finally {
+    checkExit();
   }
-  console.log("Tests:", test);
-}
+};
 
-if (test) {
-  const testScripts = {
-    PLAYWRIGHT: "pnpm exec playwright test --project=chromium",
-    VITEST: "pnpm exec vitest run",
-  };
-  console.log("Use testScripts: ", testScripts);
-
-  if (test.playwright) {
-    if (test.playwright === "all") {
-      exec(testScripts.PLAYWRIGHT);
-    } else {
-      const specs = Array.isArray(test.playwright)
-        ? test.playwright.join(" ")
-        : String(test.playwright);
-      exec(`${testScripts.PLAYWRIGHT} ${specs}`);
-    }
-  }
-
-  if (test.vitest) {
-    if (test.vitest === "all") {
-      exec(`${testScripts.VITEST} --coverage`);
-    } else {
-      const specs = Array.isArray(test.vitest)
-        ? test.vitest.join(" ")
-        : String(test.vitest);
-      exec(`${testScripts.VITEST} ${specs}`);
-    }
-  }
-}
-
-checkExit();
+main();
