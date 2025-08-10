@@ -13,33 +13,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
-      pr-tests: ${{ steps.out-step.outputs.pr-tests }}
+      pr_tests: ${{ steps.out-step.outputs.pr_tests }}
     steps:
       - uses: actions/checkout@v4
 
       # Extract PR Tests from pull request body
-      - name: Check for PR Tests
-        uses: actions-ecosystem/action-regex-match@v2
-        id: regex-match-pr-tests
-        with:
-          text: ${{ (github.event.pull_request.body) }}
-          regex: '^###\s*PR Tests[\s\S]*?```([\s\S]*?)```'
-          flags: m
-
-      - name: Pass PR Tests to run job
+      - name: Extract PR Tests
         id: out-step
-        run: |
-          CONTENT="${{ steps.regex-match-pr-tests.outputs.group1 }}"
-          echo "Content extracted: $CONTENT"
-          {
-            echo 'pr-tests<<EOF'
-            echo "$CONTENT"
-            echo 'EOF'
-          } >> $GITHUB_OUTPUT
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request?.body ?? '';
+            const re = /^###\s*PR Tests[\s\S]*?```([\s\S]*?)```/m;
+            const m = body.match(re);
+            const code = m ? m[1].trim() : '';
+            core.setOutput('pr_tests', code);
 
   run-tests:
     needs: pre-run
-    if: needs.pre-run.outputs.pr-tests != ''
+    if: needs.pre-run.outputs.pr_tests != ''
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/playwright:v1.54.2-jammy
@@ -68,7 +60,7 @@ jobs:
       - name: Run tests from PR description
         run: node ./scripts/ci/test-pr.js
         env:
-          PR_TESTS_YAML: ${{ needs.pre-run.outputs.pr-tests }}
+          PR_TESTS_YAML: ${{ needs.pre-run.outputs.pr_tests }}
           NO_COLOR: 1
 
       - name: Upload artifacts
