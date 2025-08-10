@@ -24,7 +24,7 @@ jobs:
         with:
           text: ${{ toJSON(github.event.pull_request.body) }}
           regex: '### PR Tests[\\s\\S]*?```([\\s\\S]*?)```'
-          flags: gm
+          flags: m
 
       - name: Pass PR Tests to run job
         id: out-step
