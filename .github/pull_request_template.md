@@ -2,6 +2,9 @@
 
 ```
 playwright:
+  - all
   - playwright/specs/*
-  - playwright/specs/update-workflow-variables.spec.ts
+vitest:
+  - all
+  - src/utils/__tests__/*
 ```
