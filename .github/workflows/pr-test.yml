@@ -1,105 +1,79 @@
-name: PR Playwright Checks
-
+name: PR Test
 on:
   pull_request:
-    types: [opened, reopened] # won't run on each push
-  workflow_dispatch:
-    inputs:
-      pr_number:
-        description: "PR number (set by recheck workflow)"
-        required: false
-      head_sha:
-        description: "Head SHA (trace only)"
-        required: false
-
-permissions:
-  contents: read
-  pull-requests: read
-
+    types: [opened, synchronize, reopened, edited]
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number || 'manual' }}
+  group: pr-test-${{ github.event.pull_request.html_url }}
   cancel-in-progress: true
-
+env:
+  NODE_OPTIONS: --max-old-space-size=4096
 jobs:
-  tests:
-    name: Playwright
+  pre-run:
+    if: github.event.pull_request.draft == false && github.event.pull_request.merged == false
     runs-on: ubuntu-latest
-    container:
-      image: mcr.microsoft.com/playwright:v1.54.2-jammy
-
+    timeout-minutes: 60
+    outputs:
+      pr-tests: ${{ steps.out-step.outputs.pr-tests }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Resolve PR number
-        id: prnum
-        uses: actions/github-script@v7
+      # Extract PR Tests from pull request body
+      - name: Check for PR Tests
+        uses: actions-ecosystem/action-regex-match@v2
+        id: regex-match-pr-tests
+        with:
+          text: ${{ toJSON(github.event.pull_request.body) }}
+          regex: '(### PR Tests\r\n```)([^`]+?)(```)'
+          flags: gm
+
+      - name: Pass PR Tests to run job
+        id: out-step
+        run: |
+          echo "${{ steps.regex-match-pr-tests.outputs.group2 }}"
+          echo "pr-tests=${{ steps.regex-match-pr-tests.outputs.group2 }}" >> $GITHUB_OUTPUT
+
+  run-tests:
+    needs: pre-run
+    if: needs.pre-run.outputs.pr-tests != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+
+      - name: Enable corepack and setup pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@8.6.7 --activate
+
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+          key: pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - run: pnpm install --store-dir=node_modules/.pnpm-store
+
+      - name: Install Playwright Chromium only
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run tests from PR description
+        run: node ./scripts/ci/test-pr.js
         env:
-          DISPATCH_PR_NUMBER: ${{ inputs.pr_number }}
+          PULL_REQUEST_BODY: ${{ github.event.pull_request.body }}
+          NO_COLOR: 1
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            let prNumber = process.env.DISPATCH_PR_NUMBER || '';
-            if (!prNumber && context.eventName === 'pull_request') {
-              prNumber = String(context.payload.pull_request?.number || '');
-            }
-            core.setOutput('prNumber', prNumber);
-
-      - name: Extract Playwright patterns from fenced block above HTML marker
-        id: testspec
-        uses: actions/github-script@v7
-        env:
-          PR_NUMBER: ${{ steps.prnum.outputs.prNumber }}
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const prNumber = Number(process.env.PR_NUMBER || '0');
-            if (!prNumber) { core.setOutput('cliArgs',''); return; }
-
-            const pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
-            const body = pr.data.body || '';
-
-            // 1) Find the `### PR Tests` heading and select the first fenced block after it
-            const headingMarker = '### PR Tests';
-            const headingIndex = body.indexOf(headingMarker);
-            if (headingIndex === -1) { core.setOutput('cliArgs',''); return; }
-            const searchAfter = body.slice(headingIndex);
-
-            // 2) First fenced block AFTER the heading
-            const fenceRe = /```([\s\S]*?)```/g;
-            const m = fenceRe.exec(searchAfter);
-            const selectedBlock = m ? m[1] : null;
-
-            // 3) Parse only the `playwright:` list from YAML-like lines (no deps)
-            let globs = [];
-            if (selectedBlock) {
-              const lines = selectedBlock.split(/\r?\n/);
-              let i = lines.findIndex(l => /^\s*playwright\s*:\s*$/.test(l));
-              if (i !== -1) {
-                for (let j = i + 1; j < lines.length; j++) {
-                  const mm = lines[j].match(/^\s*-\s*(.+?)\s*$/);
-                  if (!mm) break;
-                  const val = mm[1].trim();
-                  if (val) globs.push(val);
-                }
-              }
-            }
-
-            if (globs.length === 0) {
-              // no patterns provided; leave empty to skip
-            }
-
-            core.setOutput('cliArgs', globs.map(g => `'${g}'`).join(' '));
-
-      - name: Setup PNPM
-        if: ${{ steps.testspec.outputs.cliArgs != '' }}
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - name: Install dependencies
-        if: ${{ steps.testspec.outputs.cliArgs != '' }}
-        run: pnpm install --frozen-lockfile
-
-      - name: Run Playwright tests
-        if: ${{ steps.testspec.outputs.cliArgs != '' }}
-        run: pnpm exec playwright test ${{ steps.testspec.outputs.cliArgs }}
+          name: artifact
+          path: |
+            coverage/**
+            playwright-report/**
+            test-results/**
