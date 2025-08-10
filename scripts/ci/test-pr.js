@@ -6,7 +6,7 @@ const { exec, checkExit } = getExec();
 function extractPrTestsYaml(prBody) {
   if (!prBody) return "";
   try {
-    return prBody.split("### PR Tests")[1].trim().split("```")[1];
+    return prBody.split("### PR Tests")[1].trim().split("```")[1].trim();
   } catch (_e) {
     return "";
   }
