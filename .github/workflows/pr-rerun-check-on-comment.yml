@@ -11,10 +11,10 @@ permissions:
 
 jobs:
   rerun:
-    # PR only, case-insensitive match for command, and ignore bot comments
+    # PR only, exact match "Run test", and ignore bot comments
     if: >
       github.event.issue.pull_request &&
-      contains(toLower(github.event.comment.body), 'run test') &&
+      github.event.comment.body == 'Run test' &&
       github.event.comment.user.type != 'Bot'
     runs-on: ubuntu-latest
     steps:
