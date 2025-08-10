@@ -58,20 +58,21 @@ jobs:
             const pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
             const body = pr.data.body || '';
 
-            // 1) Find the HTML marker
-            const marker = '<!---------- PR Tests';
-            const markerIndex = body.indexOf(marker);
-            const searchText = markerIndex > -1 ? body.slice(0, markerIndex) : body;
+            // 1) Find the `### PR Tests` heading and select the first fenced block after it
+            const headingMarker = '### PR Tests';
+            const headingIndex = body.indexOf(headingMarker);
+            if (headingIndex === -1) { core.setOutput('cliArgs',''); return; }
+            const searchAfter = body.slice(headingIndex);
 
-            // 2) Find the LAST fenced code block before the marker
+            // 2) First fenced block AFTER the heading
             const fenceRe = /```([\s\S]*?)```/g;
-            let lastBlock = null; let m;
-            while ((m = fenceRe.exec(searchText)) !== null) lastBlock = m[1];
+            const m = fenceRe.exec(searchAfter);
+            const selectedBlock = m ? m[1] : null;
 
             // 3) Parse only the `playwright:` list from YAML-like lines (no deps)
             let globs = [];
-            if (lastBlock) {
-              const lines = lastBlock.split(/\r?\n/);
+            if (selectedBlock) {
+              const lines = selectedBlock.split(/\r?\n/);
               let i = lines.findIndex(l => /^\s*playwright\s*:\s*$/.test(l));
               if (i !== -1) {
                 for (let j = i + 1; j < lines.length; j++) {
