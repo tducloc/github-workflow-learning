@@ -1,0 +1,100 @@
+name: PR Playwright Checks
+
+on:
+  pull_request:
+    types: [opened, reopened] # won't run on each push
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number (set by recheck workflow)"
+        required: false
+      head_sha:
+        description: "Head SHA (trace only)"
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number || 'manual' }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Playwright
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.46.0-jammy
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve PR number
+        id: prnum
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let prNumber = core.getInput('pr_number');
+            if (!prNumber && context.eventName === 'pull_request') {
+              prNumber = String(context.payload.pull_request.number);
+            }
+            core.setOutput('prNumber', prNumber || '');
+
+      - name: Extract Playwright patterns from fenced block above HTML marker
+        id: testspec
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const prNumber = Number(core.getOutput('prNumber'));
+            if (!prNumber) { core.setOutput('cliArgs',''); return; }
+
+            const pr = await github.rest.pulls.get({ owner, repo, pull_number: prNumber });
+            const body = pr.data.body || '';
+
+            // 1) Find the HTML marker
+            const marker = '<!---------- PR Tests';
+            const markerIndex = body.indexOf(marker);
+            const searchText = markerIndex > -1 ? body.slice(0, markerIndex) : body;
+
+            // 2) Find the LAST fenced code block before the marker
+            const fenceRe = /```([\s\S]*?)```/g;
+            let lastBlock = null; let m;
+            while ((m = fenceRe.exec(searchText)) !== null) lastBlock = m[1];
+
+            // 3) Parse only the `playwright:` list from YAML-like lines (no deps)
+            let globs = [];
+            if (lastBlock) {
+              const lines = lastBlock.split(/\r?\n/);
+              let i = lines.findIndex(l => /^\s*playwright\s*:\s*$/.test(l));
+              if (i !== -1) {
+                for (let j = i + 1; j < lines.length; j++) {
+                  const mm = lines[j].match(/^\s*-\s*(.+?)\s*$/);
+                  if (!mm) break;
+                  const val = mm[1].trim();
+                  if (val) globs.push(val);
+                }
+              }
+            }
+
+            if (globs.length === 0) {
+              // no patterns provided; leave empty to skip
+            }
+
+            core.setOutput('cliArgs', globs.map(g => `'${g}'`).join(' '));
+
+      - name: Setup PNPM
+        if: ${{ steps.testspec.outputs.cliArgs != '' }}
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        if: ${{ steps.testspec.outputs.cliArgs != '' }}
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Playwright tests
+        if: ${{ steps.testspec.outputs.cliArgs != '' }}
+        run: pnpm exec playwright test ${{ steps.testspec.outputs.cliArgs }}
