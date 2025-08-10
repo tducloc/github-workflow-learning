@@ -29,8 +29,15 @@ jobs:
       - name: Pass PR Tests to run job
         id: out-step
         run: |
-          echo "${{ steps.regex-match-pr-tests.outputs.group1 }}"
-          echo "pr-tests=${{ steps.regex-match-pr-tests.outputs.group1 }}" >> $GITHUB_OUTPUT
+          CONTENT="${{ steps.regex-match-pr-tests.outputs.group1 }}"
+          if [ -n "$CONTENT" ]; then
+            {
+              echo 'pr-tests<<__PR_TESTS__'
+              printf '%s' "$CONTENT"
+              echo
+              echo '__PR_TESTS__'
+            } >> "$GITHUB_OUTPUT"
+          fi
 
   run-tests:
     needs: pre-run
