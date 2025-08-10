@@ -41,14 +41,13 @@ jobs:
           script: |
             const {owner, repo} = context.repo;
             const prNumber = Number(process.env.PR_NUMBER);
+            const resp = await github.request(
+              'GET /repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs',
+              { owner, repo, workflow_id: 'pr-test.yml', per_page: 100 }
+            );
+            const runs = resp.data.workflow_runs || [];
 
-            const runsResp = await github.rest.actions.listWorkflowRunsForWorkflow({
-              owner, repo,
-              workflow_id: 'pr-test.yml',
-              per_page: 50
-            });
-
-            const targets = runsResp.data.workflow_runs.filter(wr => {
+            const targets = runs.filter(wr => {
               const isSamePR = (wr.pull_requests || []).some(p => p.number === prNumber);
               const active = ['in_progress','queued'].includes(wr.status);
               return isSamePR && active;
