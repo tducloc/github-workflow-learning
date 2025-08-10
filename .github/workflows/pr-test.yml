@@ -23,7 +23,7 @@ jobs:
         id: regex-match-pr-tests
         with:
           text: ${{ (github.event.pull_request.body) }}
-          regex: '^###\\s*PR Tests[\\s\\S]*?```([\\s\\S]*?)```'
+          regex: '^###\s*PR Tests[\s\S]*?```([\s\S]*?)```'
           flags: m
 
       - name: Pass PR Tests to run job
